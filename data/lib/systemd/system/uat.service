@@ -1,0 +1,12 @@
+[Unit]
+Description=User address translation
+
+[Service]
+ExecStart=uat
+DynamicUser=yes
+User=uat
+Group=uat
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_PERFMON
+
+[Install]
+WantedBy=multi-user.target

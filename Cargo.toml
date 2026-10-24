@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["uat", "uat-common", "uat-ebpf"]
+default-members = ["uat", "uat-common"]
+
+[workspace.package]
+license = "MIT"
+edition = "2024"
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+argh = "0.1.19"
+aya = "0.14.0"
+aya-build = "0.2.0"
+aya-ebpf = "0.2.1"
+aya-log = "0.3.0"
+aya-log-ebpf = "0.2.0"
+cargo_metadata = "0.23.1"
+env_logger = "0.11.11"
+ipnet = "2.12.2"
+libc = "0.2.190"
+tokio = "1.53.2"
+which = "8.0.6"
+
+[profile.release.package.uat-ebpf]
+debug = 2
+codegen-units = 1
+strip = false
+
+
+[patch.crates-io]
+ipnet = { git = "https://github.com/kenkinming2002/ipnet.git" }

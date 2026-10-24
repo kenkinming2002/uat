@@ -1,0 +1,28 @@
+[package]
+name = "uat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uat-common = { path = "../uat-common", features = ["user"] }
+
+anyhow.workspace = true
+argh.workspace = true
+aya-log.workspace = true
+aya.workspace = true
+env_logger.workspace = true
+ipnet.workspace = true
+libc.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "signal", "net"] }
+
+[build-dependencies]
+uat-ebpf = { path = "../uat-ebpf" }
+
+anyhow.workspace = true
+aya-build.workspace = true
+cargo_metadata.workspace = true
+
+[[bin]]
+name = "uat"
+path = "src/main.rs"

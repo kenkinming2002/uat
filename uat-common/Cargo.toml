@@ -1,0 +1,16 @@
+[package]
+name = "uat-common"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+user = ["aya"]
+
+[dependencies]
+aya = { workspace = true, optional = true }
+ipnet = { workspace = true, default-features = false }
+
+[lib]
+path = "src/lib.rs"
