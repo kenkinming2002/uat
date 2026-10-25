@@ -122,7 +122,6 @@ fn rmap(mapped_addr: Addr, mapped_port: Port) -> Result<Option<(Addr, Port)>, &'
         let min_port = MIN_PORT.load();
         let max_port = MAX_PORT.load();
         if u16::from_be(*min_port) <= u16::from_be(*mapped_port) && u16::from_be(*mapped_port) <= u16::from_be(*max_port) {
-            error!(&(), "min_port = {}, max_port = {}, mapped_port = {}", u16::from_be(*min_port), u16::from_be(*max_port), u16::from_be(*mapped_port));
             return Err("BUG: reverse mapping reserved port on INADDR_ANY");
         } else {
             return Ok(None)
@@ -212,13 +211,11 @@ pub fn recvmsg4(ctx: SockAddrContext) -> i32 {
 }
 #[cgroup_sock_addr(getpeername4)]
 pub fn getpeername4(ctx: SockAddrContext) -> i32 {
-    error!(&ctx, "getpeername4");
     ctx_bail(&ctx, ctx_rmap(&ctx))
 }
 
 #[cgroup_sock_addr(getsockname4)]
 pub fn getsockname4(ctx: SockAddrContext) -> i32 {
-    error!(&ctx, "getsockname4");
     ctx_bail(&ctx, ctx_rmap(&ctx))
 }
 

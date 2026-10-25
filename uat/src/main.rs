@@ -22,8 +22,8 @@ struct Args {
     #[argh(option, default="\"192.168.33.0/24\".parse().unwrap()")]
     net: Ipv4Net,
 
-    /// minimum reserved port (default: 32768)
-    #[argh(option, default="32768")]
+    /// minimum reserved port (default: 61000)
+    #[argh(option, default="61000")]
     min_port: u16,
 
     /// maximum reserved port (default: 65535)

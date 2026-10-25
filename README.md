@@ -35,45 +35,44 @@ $ cargo build --profile release
 ## Usage
 
 ```shell
-$ sudo uat <NET>
+$ sudo uat
 ```
 
-This will create a network interface with address set to specified by `NET`,
-which should be an ipv4 network in CIDR notation. Relevant routes will also be
-setup so that you could listen on and send message over the network interface
-address. For simplicity of explanation, lets say `NET` is selected to be
-`192.168.33.0/24`. You can setup tcp connection over addresses in `NET` except
-the actual ip address (`192.168.33.0`) using netcat:
+By default, this will create a network interface with addresses set to
+`192.168.33.0/24`, which can be overridden with `--net`, for local
+communication. For example, using netcat:
 
 ```shell
 $ nc -l 192.168.33.1 80 # server
 $ nc 192.168.33.1 80 # client
 ```
 
-Notice that it is also possible to bind to privilege port. Under the hood, a
-eBPF program is used to dynamically allocate and remap ports. Because the
-allocation is per user, it is possible to communicate over the same address and
-port pair as another user such as root:
+The address is per-user so that it is possible to communicate over the same
+address as another user such as root:
 
 ```shell
 $ sudo nc -l 192.168.33.1 80 # server
 $ sudo nc 192.168.33.1 80 # client
 ```
 
-To put it simply, a port mapping `(uid, address, port) <-> (address, port)` is
-dynamically built under the hood. It is easy to see that this mapping can never
-be injective. Because of this and limitation of eBPF program, it is possible
-for the port mapping process to fail. In such a case, we may use the ip address
-(`192.168.33.0`) as a placeholder which is why it is important to not actually
-use this address.
+Under the hood, a port mapping `(uid, address, port) <-> (address, port)` is
+dynamically built. It is easy to see that this mapping can never be injective.
+Because of this and limitation of eBPF program, it is possible for the port
+mapping process to fail, in which case the primary ip address (`192.168.33.0`)
+is substituted in. It is thus important not to communicate over this primary ip
+address.
 
-## Reserved Port and INADDR_ANY
+Range of reserved port, which defaults to `61000-65535`, can also be specified
+using `--min-port` and `--max-port` options. Mapped ports are selected from the
+range of reserved port and the default range is chosen to avoid collision with:
+ - Low ports commonly used for system and user service.
+ - Range for ephemeral port allocation by kernel as specified in
+   `/proc/sys/net/ipv4/ip_local_port_range` (default: 32768-60999).
+It is important to keep the above in mind when picking an alternative range of
+reserved ports.
 
-It is possible to listen on all interface over a specific port by using
-INADDR_ANY, which is a trivial bypass to the port remapping mechanism.
-Therefore, a range of ports (default to 32768-65535) from which mapped ports
-are allocated needs to be specified and binding to INADDR_ANY over those ports
-is denied.
+In order to avoid trivial bypass by binding to INADDR_ANY, attempts to bind to
+reserved ports with INADDR_ANY will be blocked.
 
 ## Design
 
