@@ -5,7 +5,7 @@ use core::net::Ipv4Addr;
 
 use aya_ebpf::{EbpfContext, Global, bindings::{BPF_F_NO_PREALLOC, BPF_NOEXIST}, helpers::generated::bpf_get_prandom_u32, macros::{cgroup_sock_addr, map}, maps::HashMap, programs::SockAddrContext};
 use aya_log_ebpf::error;
-use uat_common::{Ipv4Net, Net};
+use uat_common::{Addr, Ipv4Net, Net, Port, Uid};
 
 #[unsafe(link_section = "license")]
 #[unsafe(no_mangle)]
@@ -23,17 +23,9 @@ const MAX_RETRIES: u32 = 1024;
 #[unsafe(no_mangle)] static NET: Global<Net> = Global::new(Net(Ipv4Net::new_assert(Ipv4Addr::new(127, 0, 0, 1), 8)));
 
 #[derive(Clone, Copy, Debug)]
-#[repr(transparent)]
-struct Uid(u32);
-
-#[derive(Clone, Copy, Debug)]
-#[repr(transparent)]
-struct Port(u16);
-
-#[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct MapKey {
-    addr: Ipv4Addr,
+    addr: Addr,
     uid: Uid,
     port: Port,
 }
@@ -47,7 +39,7 @@ struct MapValue {
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct RMapKey {
-    addr: Ipv4Addr,
+    addr: Addr,
     mapped_port: Port,
 }
 
@@ -61,9 +53,9 @@ struct RMapValue {
 #[map] static MAP: HashMap<MapKey, MapValue> = HashMap::with_max_entries(MAX_ENTRIES, BPF_F_NO_PREALLOC);
 #[map] static RMAP: HashMap<RMapKey, RMapValue> = HashMap::with_max_entries(MAX_ENTRIES, BPF_F_NO_PREALLOC);
 
-fn map(uid: Uid, addr: Ipv4Addr, port: Port) -> Result<Option<Port>, &'static str> {
+fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
     let net = NET.load();
-    if net.addr() == addr || !net.contains(&addr) {
+    if net.addr() == *addr || !net.contains(&*addr) {
         return Ok(None)
     }
 
@@ -97,9 +89,9 @@ fn map(uid: Uid, addr: Ipv4Addr, port: Port) -> Result<Option<Port>, &'static st
     Err("attempt exhausted")
 }
 
-fn rmap(addr: Ipv4Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
+fn rmap(addr: Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
     let net = NET.load();
-    if net.addr() == addr || !net.contains(&addr) {
+    if net.addr() == *addr || !net.contains(&*addr) {
         return Ok(None)
     }
 
@@ -109,8 +101,8 @@ fn rmap(addr: Ipv4Addr, mapped_port: Port) -> Result<Option<Port>, &'static str>
 
 fn ctx_map(ctx: &SockAddrContext) -> i32 {
     let uid = Uid(ctx.uid());
-    let addr = unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) };
-    let port = unsafe { Port((*ctx.sock_addr).user_port as u16) };
+    let addr = Addr(unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) });
+    let port = Port(unsafe { (*ctx.sock_addr).user_port as u16 });
     match map(uid, addr, port) {
         Ok(mapped_port) => {
             if let Some(mapped_port) = mapped_port { unsafe { (*ctx.sock_addr).user_port = mapped_port.0 as u32 } }
@@ -125,8 +117,8 @@ fn ctx_map(ctx: &SockAddrContext) -> i32 {
 }
 
 fn ctx_rmap(ctx: &SockAddrContext) -> i32 {
-    let addr = unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) };
-    let mapped_port = unsafe { Port((*ctx.sock_addr).user_port as u16) };
+    let addr = Addr(unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) });
+    let mapped_port = Port(unsafe { (*ctx.sock_addr).user_port as u16 });
     match rmap(addr, mapped_port) {
         Ok(port) => {
             if let Some(port) = port { unsafe { (*ctx.sock_addr).user_port = port.0 as u32 } }

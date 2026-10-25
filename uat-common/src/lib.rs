@@ -3,31 +3,32 @@
 pub use core::net::Ipv4Addr;
 pub use ipnet::Ipv4Net;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Net(pub Ipv4Net);
+macro_rules! wrapper {
+    ($outer:ident, $inner:ty) => {
+        #[derive(Clone, Copy, Debug)]
+        #[repr(transparent)]
+        pub struct $outer(pub $inner);
 
-impl core::ops::Deref for Net {
-    type Target = Ipv4Net;
+        impl core::ops::Deref for $outer {
+            type Target = $inner;
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl core::ops::DerefMut for $outer {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        #[cfg(feature="user")]
+        unsafe impl aya::Pod for $outer {}
+    };
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Addr(pub Ipv4Addr);
-
-impl core::ops::Deref for Addr {
-    type Target = Ipv4Addr;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[cfg(feature="user")]
-mod pod {
-    use super::*;
-    unsafe impl aya::Pod for Addr {}
-    unsafe impl aya::Pod for Net {}
-}
+wrapper!(Net, Ipv4Net);
+wrapper!(Addr, Ipv4Addr);
+wrapper!(Uid, u32);
+wrapper!(Port, u16);
