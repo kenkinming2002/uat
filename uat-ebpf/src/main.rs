@@ -20,7 +20,9 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 const MAX_ENTRIES: u32 = 1024;
 const MAX_RETRIES: u32 = 1024;
 
-#[unsafe(no_mangle)] static NET: Global<Net> = Global::new(Net(Ipv4Net::new_assert(Ipv4Addr::new(127, 0, 0, 1), 8)));
+#[unsafe(no_mangle)] static NET: Global<Net> = Global::new(Net(Ipv4Net::new_assert(Ipv4Addr::new(0, 0, 0, 0), 0)));
+#[unsafe(no_mangle)] static MIN_PORT: Global<Port> = Global::new(Port(0));
+#[unsafe(no_mangle)] static MAX_PORT: Global<Port> = Global::new(Port(0));
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
@@ -54,6 +56,14 @@ struct RMapValue {
 #[map] static RMAP: HashMap<RMapKey, RMapValue> = HashMap::with_max_entries(MAX_ENTRIES, BPF_F_NO_PREALLOC);
 
 fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
+    if *addr == Ipv4Addr::UNSPECIFIED {
+        if *MIN_PORT.load() <= *port && *port <= *MAX_PORT.load()  {
+            return Err("reserved port on INADDR_ANY");
+        } else {
+            return Ok(None)
+        }
+    }
+
     let net = NET.load();
     if net.addr() == *addr || !net.contains(&*addr) {
         return Ok(None)
@@ -63,26 +73,27 @@ fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
         return Ok(Some(mapped_port))
     }
 
+    if *MAX_PORT.load() <= *MIN_PORT.load() {
+        Err("invalid port configuration")?
+    }
+
     for _ in 0..MAX_RETRIES {
         let random = unsafe { bpf_get_prandom_u32() };
-        let mapped_port1 = Port(((random >> 0)  & 0xFFFF) as u16);
-        let mapped_port2 = Port(((random >> 16) & 0xFFFF) as u16);
-        for mapped_port in [mapped_port1, mapped_port2] {
-            if RMAP.get_ptr(RMapKey { addr, mapped_port }).is_none() {
-                let Ok(()) = RMAP.insert(RMapKey { addr, mapped_port }, RMapValue { port }, BPF_NOEXIST as u64) else {
-                    // This happens if we are extremely unlucky and the same mapped_port is
-                    // concurrently allocated at random. Retry.
-                    continue
-                };
+        let mapped_port = Port((*MIN_PORT.load() as u32 + random.checked_rem((*MAX_PORT.load() - *MIN_PORT.load()) as u32).unwrap_or(0)) as u16);
+        if RMAP.get_ptr(RMapKey { addr, mapped_port }).is_none() {
+            let Ok(()) = RMAP.insert(RMapKey { addr, mapped_port }, RMapValue { port }, BPF_NOEXIST as u64) else {
+                // This happens if we are extremely unlucky and the same mapped_port is
+                // concurrently allocated at random. Retry.
+                continue
+            };
 
-                let Ok(()) = MAP.insert(MapKey { addr, uid, port }, MapValue { mapped_port }, BPF_NOEXIST as u64) else {
-                    // This happens if we try to allocate mapped_port for the same uid and port pair
-                    // and have already succeeded concurrently. Cleanup and bail out.
-                    let Ok(()) = RMAP.remove(RMapKey { addr, mapped_port }) else { return Err("BUG: inserted key missing 1") };
-                    let Some(&MapValue { mapped_port }) = (unsafe { MAP.get(MapKey { addr, uid, port }) }) else { return Err("BUG: inserted key missing 2") };
-                    return Ok(Some(mapped_port));
-                };
-            }
+            let Ok(()) = MAP.insert(MapKey { addr, uid, port }, MapValue { mapped_port }, BPF_NOEXIST as u64) else {
+                // This happens if we try to allocate mapped_port for the same uid and port pair
+                // and have already succeeded concurrently. Cleanup and bail out.
+                let Ok(()) = RMAP.remove(RMapKey { addr, mapped_port }) else { return Err("BUG: inserted key missing 1") };
+                let Some(&MapValue { mapped_port }) = (unsafe { MAP.get(MapKey { addr, uid, port }) }) else { return Err("BUG: inserted key missing 2") };
+                return Ok(Some(mapped_port));
+            };
         }
     }
 
@@ -90,6 +101,14 @@ fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
 }
 
 fn rmap(addr: Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
+    if *addr == Ipv4Addr::UNSPECIFIED {
+        if *MIN_PORT.load() <= *mapped_port && *mapped_port <= *MAX_PORT.load()  {
+            return Err("BUG: reverse mapping reserved port on INADDR_ANY");
+        } else {
+            return Ok(None)
+        }
+    }
+
     let net = NET.load();
     if net.addr() == *addr || !net.contains(&*addr) {
         return Ok(None)

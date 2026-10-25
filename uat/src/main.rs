@@ -11,7 +11,7 @@ use aya::programs::{CgroupAttachMode, Program};
 use aya_log::EbpfLogger;
 use ipnet::Ipv4Net;
 use tokio::io::{Interest, unix::AsyncFd};
-use uat_common::Net;
+use uat_common::{Net, Port};
 
 use crate::tun::Tun;
 
@@ -19,8 +19,16 @@ use crate::tun::Tun;
 #[derive(FromArgs, PartialEq, Debug)]
 struct Args {
     /// ipv4 network to use (default: 192.168.33.0/24)
-    #[argh(positional, default="\"192.168.33.0/24\".parse().unwrap()")]
+    #[argh(option, default="\"192.168.33.0/24\".parse().unwrap()")]
     net: Ipv4Net,
+
+    /// minimum reserved port (default: 32768)
+    #[argh(option, default="32768")]
+    min_port: u16,
+
+    /// maximum reserved port (default: 65535)
+    #[argh(option, default="65535")]
+    max_port: u16,
 }
 
 #[tokio::main]
@@ -29,6 +37,8 @@ async fn main() -> Result<()> {
 
     let mut ebpf = aya::EbpfLoader::new()
         .override_global("NET", &Net(args.net), true)
+        .override_global("MIN_PORT", &Port(args.min_port), true)
+        .override_global("MAX_PORT", &Port(args.max_port), true)
         .load(aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/uat")))?;
 
     let cgroup = Dir::open("/sys/fs/cgroup")?;

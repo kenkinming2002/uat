@@ -67,6 +67,14 @@ mapping process to fail. In such a case, we may use the ip address
 (`192.168.33.0`) as a placeholder which is why it is important to not actually
 use this address.
 
+## Reserved Port and INADDR_ANY
+
+It is possible to listen on all interface over a specific port by using
+INADDR_ANY, which is a trivial bypass to the port remapping mechanism.
+Therefore, a range of ports (default to 32768-65535) from which mapped ports
+are allocated needs to be specified and binding to INADDR_ANY over those ports
+is denied.
+
 ## Design
 
 In principle, it is possible to create a blackhole route for the ip address
