@@ -27,27 +27,29 @@ const MAX_RETRIES: u32 = 1024;
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct MapKey {
-    addr: Addr,
     uid: Uid,
+    addr: Addr,
     port: Port,
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct MapValue {
+    mapped_addr: Addr,
     mapped_port: Port,
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct RMapKey {
-    addr: Addr,
+    mapped_addr: Addr,
     mapped_port: Port,
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 struct RMapValue {
+    addr: Addr,
     port: Port,
 }
 
@@ -55,9 +57,28 @@ struct RMapValue {
 #[map] static MAP: HashMap<MapKey, MapValue> = HashMap::with_max_entries(MAX_ENTRIES, BPF_F_NO_PREALLOC);
 #[map] static RMAP: HashMap<RMapKey, RMapValue> = HashMap::with_max_entries(MAX_ENTRIES, BPF_F_NO_PREALLOC);
 
-fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
+fn random_addr() -> Option<Addr> {
+    let random = unsafe { bpf_get_prandom_u32() };
+    let net = NET.load();
+    let network = u32::from_ne_bytes(net.network().octets());
+    let hostmask = u32::from_ne_bytes(net.hostmask().octets());
+    let addr = Ipv4Addr::from_octets((network | (random & hostmask)).to_ne_bytes());
+    (addr != net.addr()).then_some(Addr(addr))
+}
+
+fn random_port() -> Option<Port> {
+    let random = unsafe { bpf_get_prandom_u32() };
+    let min_port = MIN_PORT.load();
+    let max_port = MAX_PORT.load();
+    let port = (*min_port as u32 + random.checked_rem((*max_port - *min_port) as u32)?) as u16;
+    Some(Port(port))
+}
+
+fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<(Addr, Port)>, &'static str> {
     if *addr == Ipv4Addr::UNSPECIFIED {
-        if u16::from_be(*MIN_PORT.load()) <= u16::from_be(*port) && u16::from_be(*port) <= u16::from_be(*MAX_PORT.load()) {
+        let min_port = MIN_PORT.load();
+        let max_port = MAX_PORT.load();
+        if u16::from_be(*min_port) <= u16::from_be(*port) && u16::from_be(*port) <= u16::from_be(*max_port) {
             return Err("reserved port on INADDR_ANY");
         } else {
             return Ok(None)
@@ -69,30 +90,26 @@ fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
         return Ok(None)
     }
 
-    if let Some(&MapValue { mapped_port }) = unsafe { MAP.get(MapKey { addr, uid, port }) } {
-        return Ok(Some(mapped_port))
-    }
-
-    if *MAX_PORT.load() <= *MIN_PORT.load() {
-        Err("invalid port configuration")?
+    if let Some(&MapValue { mapped_addr, mapped_port }) = unsafe { MAP.get(MapKey { uid, addr, port }) } {
+        return Ok(Some((mapped_addr, mapped_port)))
     }
 
     for _ in 0..MAX_RETRIES {
-        let random = unsafe { bpf_get_prandom_u32() };
-        let mapped_port = Port((*MIN_PORT.load() as u32 + random.checked_rem((*MAX_PORT.load() - *MIN_PORT.load()) as u32).unwrap_or(0)) as u16);
-        if RMAP.get_ptr(RMapKey { addr, mapped_port }).is_none() {
-            let Ok(()) = RMAP.insert(RMapKey { addr, mapped_port }, RMapValue { port }, BPF_NOEXIST as u64) else {
+        let Some(mapped_addr) = random_addr() else { continue };
+        let Some(mapped_port) = random_port() else { continue };
+        if RMAP.get_ptr(RMapKey { mapped_addr, mapped_port }).is_none() {
+            let Ok(()) = RMAP.insert(RMapKey { mapped_addr, mapped_port }, RMapValue { addr, port }, BPF_NOEXIST as u64) else {
                 // This happens if we are extremely unlucky and the same mapped_port is
                 // concurrently allocated at random. Retry.
                 continue
             };
 
-            let Ok(()) = MAP.insert(MapKey { addr, uid, port }, MapValue { mapped_port }, BPF_NOEXIST as u64) else {
+            let Ok(()) = MAP.insert(MapKey { uid, addr, port }, MapValue { mapped_addr, mapped_port }, BPF_NOEXIST as u64) else {
                 // This happens if we try to allocate mapped_port for the same uid and port pair
                 // and have already succeeded concurrently. Cleanup and bail out.
-                let Ok(()) = RMAP.remove(RMapKey { addr, mapped_port }) else { return Err("BUG: inserted key missing 1") };
-                let Some(&MapValue { mapped_port }) = (unsafe { MAP.get(MapKey { addr, uid, port }) }) else { return Err("BUG: inserted key missing 2") };
-                return Ok(Some(mapped_port));
+                let Ok(()) = RMAP.remove(RMapKey { mapped_addr, mapped_port }) else { return Err("BUG: inserted key missing 1") };
+                let Some(&MapValue { mapped_addr, mapped_port }) = (unsafe { MAP.get(MapKey { uid, addr, port }) }) else { return Err("BUG: inserted key missing 2") };
+                return Ok(Some((mapped_addr, mapped_port)));
             };
         }
     }
@@ -100,9 +117,12 @@ fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
     Err("attempt exhausted")
 }
 
-fn rmap(addr: Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
-    if *addr == Ipv4Addr::UNSPECIFIED {
-        if u16::from_be(*MIN_PORT.load()) <= u16::from_be(*mapped_port) && u16::from_be(*mapped_port) <= u16::from_be(*MAX_PORT.load()) {
+fn rmap(mapped_addr: Addr, mapped_port: Port) -> Result<Option<(Addr, Port)>, &'static str> {
+    if *mapped_addr == Ipv4Addr::UNSPECIFIED {
+        let min_port = MIN_PORT.load();
+        let max_port = MAX_PORT.load();
+        if u16::from_be(*min_port) <= u16::from_be(*mapped_port) && u16::from_be(*mapped_port) <= u16::from_be(*max_port) {
+            error!(&(), "min_port = {}, max_port = {}, mapped_port = {}", u16::from_be(*min_port), u16::from_be(*max_port), u16::from_be(*mapped_port));
             return Err("BUG: reverse mapping reserved port on INADDR_ANY");
         } else {
             return Ok(None)
@@ -110,12 +130,12 @@ fn rmap(addr: Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
     }
 
     let net = NET.load();
-    if net.addr() == *addr || !net.contains(&*addr) {
+    if net.addr() == *mapped_addr || !net.contains(&*mapped_addr) {
         return Ok(None)
     }
 
-    let Some(&RMapValue { port }) = (unsafe { RMAP.get(RMapKey { addr, mapped_port }) }) else { return Err("BUG: failed reverse mapping") };
-    Ok(Some(port))
+    let Some(&RMapValue { addr, port }) = (unsafe { RMAP.get(RMapKey { mapped_addr, mapped_port }) }) else { return Err("BUG: failed reverse mapping") };
+    Ok(Some((addr, port)))
 }
 
 fn ctx_map(ctx: &SockAddrContext) -> i32 {
@@ -123,10 +143,14 @@ fn ctx_map(ctx: &SockAddrContext) -> i32 {
     let addr = Addr(unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) });
     let port = Port(unsafe { (*ctx.sock_addr).user_port as u16 });
     match map(uid, addr, port) {
-        Ok(mapped_port) => {
-            if let Some(mapped_port) = mapped_port { unsafe { (*ctx.sock_addr).user_port = mapped_port.0 as u32 } }
+        Ok(Some((mapped_addr, mapped_port))) => {
+            unsafe { (*ctx.sock_addr).user_ip4  = u32::from_ne_bytes(mapped_addr.octets()) }
+            unsafe { (*ctx.sock_addr).user_port = *mapped_port as u32 }
             return 1
         },
+        Ok(None) => {
+            return 1
+        }
         Err(err) => {
             error!(&ctx, "{}", err);
             return 0
@@ -136,11 +160,15 @@ fn ctx_map(ctx: &SockAddrContext) -> i32 {
 }
 
 fn ctx_rmap(ctx: &SockAddrContext) -> i32 {
-    let addr = Addr(unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) });
+    let mapped_addr = Addr(unsafe { Ipv4Addr::from_octets(u32::to_ne_bytes((*ctx.sock_addr).user_ip4)) });
     let mapped_port = Port(unsafe { (*ctx.sock_addr).user_port as u16 });
-    match rmap(addr, mapped_port) {
-        Ok(port) => {
-            if let Some(port) = port { unsafe { (*ctx.sock_addr).user_port = port.0 as u32 } }
+    match rmap(mapped_addr, mapped_port) {
+        Ok(Some((addr, port))) => {
+            unsafe { (*ctx.sock_addr).user_ip4  = u32::from_ne_bytes(addr.octets()) }
+            unsafe { (*ctx.sock_addr).user_port = *port as u32 }
+            return 1
+        },
+        Ok(None) => {
             return 1
         },
         Err(err) => {
@@ -184,11 +212,13 @@ pub fn recvmsg4(ctx: SockAddrContext) -> i32 {
 }
 #[cgroup_sock_addr(getpeername4)]
 pub fn getpeername4(ctx: SockAddrContext) -> i32 {
+    error!(&ctx, "getpeername4");
     ctx_bail(&ctx, ctx_rmap(&ctx))
 }
 
 #[cgroup_sock_addr(getsockname4)]
 pub fn getsockname4(ctx: SockAddrContext) -> i32 {
+    error!(&ctx, "getsockname4");
     ctx_bail(&ctx, ctx_rmap(&ctx))
 }
 

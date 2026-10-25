@@ -60,10 +60,10 @@ $ sudo nc -l 192.168.33.1 80 # server
 $ sudo nc 192.168.33.1 80 # client
 ```
 
-To put it simply, a port mapping `(uid, port) <-> port` is dynamically built
-under the hood. It is easy to see that this mapping can never be injective.
-Because of this and limitation of eBPF program, it is possible for the port
-mapping process to fail. In such a case, we may use the ip address
+To put it simply, a port mapping `(uid, address, port) <-> (address, port)` is
+dynamically built under the hood. It is easy to see that this mapping can never
+be injective. Because of this and limitation of eBPF program, it is possible
+for the port mapping process to fail. In such a case, we may use the ip address
 (`192.168.33.0`) as a placeholder which is why it is important to not actually
 use this address.
 
