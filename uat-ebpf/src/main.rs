@@ -57,7 +57,7 @@ struct RMapValue {
 
 fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
     if *addr == Ipv4Addr::UNSPECIFIED {
-        if *MIN_PORT.load() <= *port && *port <= *MAX_PORT.load()  {
+        if u16::from_be(*MIN_PORT.load()) <= u16::from_be(*port) && u16::from_be(*port) <= u16::from_be(*MAX_PORT.load()) {
             return Err("reserved port on INADDR_ANY");
         } else {
             return Ok(None)
@@ -102,7 +102,7 @@ fn map(uid: Uid, addr: Addr, port: Port) -> Result<Option<Port>, &'static str> {
 
 fn rmap(addr: Addr, mapped_port: Port) -> Result<Option<Port>, &'static str> {
     if *addr == Ipv4Addr::UNSPECIFIED {
-        if *MIN_PORT.load() <= *mapped_port && *mapped_port <= *MAX_PORT.load()  {
+        if u16::from_be(*MIN_PORT.load()) <= u16::from_be(*mapped_port) && u16::from_be(*mapped_port) <= u16::from_be(*MAX_PORT.load()) {
             return Err("BUG: reverse mapping reserved port on INADDR_ANY");
         } else {
             return Ok(None)

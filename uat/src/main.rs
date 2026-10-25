@@ -37,8 +37,8 @@ async fn main() -> Result<()> {
 
     let mut ebpf = aya::EbpfLoader::new()
         .override_global("NET", &Net(args.net), true)
-        .override_global("MIN_PORT", &Port(args.min_port), true)
-        .override_global("MAX_PORT", &Port(args.max_port), true)
+        .override_global("MIN_PORT", &Port(args.min_port.to_be()), true)
+        .override_global("MAX_PORT", &Port(args.max_port.to_be()), true)
         .load(aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/uat")))?;
 
     let cgroup = Dir::open("/sys/fs/cgroup")?;
