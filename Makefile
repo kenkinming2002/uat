@@ -9,3 +9,8 @@ all:
 install:
 	install -D -m755 ./target/$(TARGET)/uat                    "$(PREFIX)/bin/uat"
 	install -D -m644 ./data/lib/systemd/system/uat.service     "$(PREFIX)/lib/systemd/system/uat.service"
+
+.PHONY: unninstall
+uninstall:
+	-rm -f "$(PREFIX)/bin/uat"
+	-rm -f "$(PREFIX)/lib/systemd/system/uat.service"
